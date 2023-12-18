@@ -31,6 +31,8 @@ wallpaper_groups = {1:  {"name" : "p1",   "layer_no" : 1,  "no_atoms" : [1, 10],
                     16: {"name" : "p6",   "layer_no" : 73, "no_atoms" : [6, 20], "even" : True},
                     17: {"name" : "p6m",  "layer_no" : 77, "no_atoms" : [6, 20], "even" : True}}
 
+sorted_groups = {"p1": 0, "p2": 1, "pg": 2, "pm": 3, "cm": 4, "pgg": 5, "pmg": 6, "pmm": 7, "cmm": 8,
+                 "p4": 9, "p4g": 10, "p4m": 11, "p3": 12, "p3m1": 13, "p31m": 14, "p6": 15, "p6m": 16}
 
 def random_wallpaper():
     return np.random.randint(17)+1
@@ -95,7 +97,7 @@ class RandomLattice:
         fig.set_size_inches(5., 5.)
         ax.imshow(transform[400:600,400:600], cmap='gray_r')
         ax.set_axis_off()
-        fig.savefig(os.path.join(self.path, sample_name+'_f'), dpi=200)
+        fig.savefig(os.path.join(self.path, sample_name+'_f'), dpi=100)
     
     def dump_labels(self, labels):
         with open(os.path.join(self.path, 'labels.json'), 'w') as fp:

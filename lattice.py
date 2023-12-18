@@ -1,9 +1,9 @@
-import utils
+import utils_gen as utils
 
 generator = utils.RandomLattice(path='./generated')
 
 labels = []
-no_samples_to_be_generated = 100
+no_samples_to_be_generated = 10000
 for i in range(no_samples_to_be_generated):
     lattice, label = generator.generate_lattice(utils.random_wallpaper())
     labels.append({"file_id": i, "label" : label})
