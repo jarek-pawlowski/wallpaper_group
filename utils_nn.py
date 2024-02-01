@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.autograd import Variable
 
@@ -25,13 +26,18 @@ import pandas as pd
 
 class Experiments():
 
-    def __init__(self, device, model, train_loader, test_loader, optimizer):
+    def __init__(self, device, model, train_loader, test_loader, criterion, optimizer):
         self.device = device
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
+        self.criterion = criterion
         self.optimizer = optimizer
-        
+        self.if_multilabel = False
+      
+    def set_multilabel(self, value=True):
+        self.if_multilabel = value
+  
     def train(self, epoch_number):
         self.model.train()
         train_loss = 0.
@@ -44,7 +50,7 @@ class Experiments():
             # this will execute the forward() function
             output = self.model(data)
             # calculate loss using criterion
-            loss = F.nll_loss(output, target, reduction='mean')
+            loss = self.criterion(output, target)
             # backpropagate the loss
             loss.backward()
             # update the model weights (with assumed learning rate)
@@ -57,46 +63,64 @@ class Experiments():
     
     def train_ae(self, epoch_number):
         self.model.train()
+        self.criterion_c = nn.BCELoss(reduction='mean')
         train_loss = 0.
+        train_loss_c = 0.
         # get subsequent batches over the data in a given epoch
-        for batch_idx, (data, _) in enumerate(self.train_loader):
-            # send data tensors to GPU (or CPU)
-            data = data.to(self.device)
+        for batch_idx, (data, target) in enumerate(self.train_loader):
+            # send tensors to GPU (or CPU)
+            data, target = data.to(self.device), target.to(self.device)
             # this will zero out the gradients for this batch
             self.optimizer.zero_grad()
-            # calculate loss using MSE criterion
-            loss = self.model._get_reconstruction_loss(data)
+            # calculate loss
+            if self.model.if_classifer:
+                loss, loss_c = self.model._get_reconstruction_and_classification_loss(data, target, self.criterion, self.criterion_c)
+                train_loss += loss.item()
+                train_loss_c += loss_c.item()
+                loss += loss_c
+            else:    
+                loss = self.model._get_reconstruction_loss(data, self.criterion)
+                train_loss += loss.item()
             # backpropagate the loss
             loss.backward()
             # update the model weights (with assumed learning rate)
-            self.optimizer.step()
-            train_loss += loss.item()
+            self.optimizer.step() 
+        #
         print('Train Epoch: {}'.format(epoch_number))
         train_loss /= len(self.train_loader)
-        print('\tTrain set: Average loss: {:.4f}'.format(train_loss))
+        if self.model.if_classifer:
+            train_loss_c /= len(self.train_loader)
+            print('\tTrain set: Average losses (AE, classifer): {:.4f}, {:.4f}'.format(train_loss, train_loss_c))
+        else:
+            print('\tTrain set: Average loss: {:.4f}'.format(train_loss))
         return train_loss
     
     def test(self, message=None):
         self.model.eval()
         test_loss = 0.
         correct = 0
+        sum_targets = len(self.test_loader.dataset)
         # this is just inference, we don't need to calculate gradients
         with torch.no_grad():
             for data, target in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device) 
                 output = self.model(data)
                 # calculate and sum up batch loss
-                test_loss += F.nll_loss(output, target, reduction='mean')
-                # get the index of class with the max probability 
-                prediction = output.argmax(dim=1)  
-                #_, predicted = torch.max(outputs.data, axis=1)
-                # item() returns value of the given tensor
-                correct += prediction.eq(target).sum().item()
+                test_loss += self.criterion(output, target)
+                # get the index of class with the max probability
+                if self.set_multilabel:
+                    prediction = output > .5 
+                    prediction = prediction.float()
+                    correct += (prediction*target).long().sum().item()  # how many from existing symmeties were detected
+                    sum_targets += target.long().sum().item()
+                else:
+                    prediction = output.argmax(dim=1) 
+                    correct += prediction.eq(target).sum().item()
         test_loss /= len(self.test_loader)
-        accuracy = correct / len(self.test_loader.dataset)
+        accuracy = correct / sum_targets    
         if message is not None:
             print('\t{}: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)'.format(
-                message, test_loss, correct, len(self.test_loader.dataset), 100.*accuracy))
+                message, test_loss, correct, sum_targets, 100.*accuracy))
         return test_loss.cpu(), accuracy
     
     def test_ae(self, message=None):
@@ -107,7 +131,7 @@ class Experiments():
             for data, _ in self.test_loader:
                 data = data.to(self.device)
                 # calculate and sum up batch loss
-                test_loss += self.model._get_reconstruction_loss(data)
+                test_loss += self.model._get_reconstruction_loss(data, self.criterion)
         test_loss /= len(self.test_loader)
         if message is not None:
             print('\t{}: Average loss: {:.4f}'.format(message, test_loss))
@@ -128,6 +152,24 @@ class Experiments():
         #return confusion.astype(float)/confusion.sum()
         #return confusion/confusion.astype(float).sum(axis=0)
         return  confusion/confusion.astype(float).sum(axis=1, keepdims=True)
+
+    def calculate_confusion_multilabel(self, no_classes):
+        self.model.eval()
+        confusions = np.zeros((no_classes,2,2))
+        # this is just inference, we don't need to calculate gradients
+        with torch.no_grad():
+            for data, target in self.test_loader:
+                data, target = data.to(self.device), target.to(self.device) 
+                if self.model.if_classifer:
+                    _, output = self.model(data)
+                else:
+                    output = self.model(data)
+                prediction = output > .5 
+                prediction = prediction.long()
+                for pr, gt in zip(prediction, target.long()):
+                    for i in range(no_classes):
+                        confusions[i, pr[i].item(), gt[i].item()] += 1
+        return confusions
 
     def run_training(self, no_epochs):
         train_loss = []
@@ -177,11 +219,11 @@ class CustomDataset(Dataset):
         if self.downsample:
             image = image[::2,::2]
         if self.normalize:
-            return self.transform(torch.tensor(image[None,...])), torch.tensor(label)
+            return self.transform(torch.tensor(image[None,...])), torch.tensor(label).type((torch.float32))
         else:
-            return torch.tensor(image[None,...]), torch.tensor(label)
+            return torch.tensor(image[None,...]), torch.tensor(label).type((torch.float32))
 
-def parse_dataset_classification(dataset_directory, labels='labels.json', splitratio=[.8,.2], batchsize=128, normalize=False, downsample=True):
+def parse_dataset_classification(dataset_directory, labels='labels.json', label_dict=sorted_groups, splitratio=[.8,.2], batchsize=128, normalize=False, downsample=True):
     label_file = open(os.path.join(dataset_directory, labels))
     label_data = json.load(label_file)
     datafiles=[]
@@ -191,7 +233,7 @@ def parse_dataset_classification(dataset_directory, labels='labels.json', splitr
         datalabels.append(ld["label"])
     #le = preprocessing.LabelEncoder()
     #datalabels = le.fit_transform(datalabels)
-    datalabels = [sorted_groups[dl] for dl in datalabels]  # translate respective groups into numbers
+    datalabels = [label_dict[dl] for dl in datalabels]  # translate respective groups into numbers
     dataset = CustomDataset(dataset_directory, datafiles, datalabels, normalize=normalize, downsample=downsample)
     trainsize = int(len(dataset)*splitratio[0])
     train_set, val_set = random_split(dataset, [trainsize, len(dataset)-trainsize])
@@ -200,16 +242,20 @@ def parse_dataset_classification(dataset_directory, labels='labels.json', splitr
     val_loader   = DataLoader(val_set, batch_size=batchsize)
     return train_loader, val_loader
 
-def plot_loss(train_loss, validation_loss, title):
+def plot_loss(train_loss, validation_loss, title, logscale=False):
     plt.grid(True)
     plt.xlabel("subsequent epochs")
     plt.ylabel('average loss')
+    if logscale: plt.yscale('log')
     plt.plot(range(1, len(train_loss)+1), train_loss, 'o-', label='training')
     plt.plot(range(1, len(validation_loss)+1), validation_loss, 'o-', label='validation')
     plt.legend()
     plt.title(title)
     plt.savefig(os.path.join('./', 'loss.png'), bbox_inches='tight', dpi=200)
     plt.close()
+
+def save_loss(train_loss, validation_loss):
+    np.savetxt("loss.txt", np.c_[train_loss, validation_loss])
 
 def plot_confusion(confusion_matrix):
     class_labels = {v: k for k, v in sorted_groups.items()}
@@ -220,6 +266,14 @@ def plot_confusion(confusion_matrix):
     ax.set(xlabel="ground truth", ylabel="prediction")
     plt.savefig(os.path.join('./', 'confusion.png'), bbox_inches='tight', dpi=200)
     plt.close()
+    
+def print_confusion(confusion_matrix, symmetry_names):
+    print("no | symmetry name | precision | recall")
+    for i in range(confusion_matrix.shape[0]):
+        cm = confusion_matrix[i]
+        print("{0:2d} | {1:13s} | {2:1.5f}   | {3:1.5f}".format(i, symmetry_names[i], 
+                                                                      cm[1,1]/(cm[1,1]+cm[1,0]), 
+                                                                      cm[1,1]/(cm[1,1]+cm[0,1])))
 
 
 class Deep(nn.Module):
@@ -290,6 +344,7 @@ class Custom_VGG(nn.Module):
                  vgg_type='vgg11', 
                  no_classes=10,
                  if_classifer=True,
+                 if_multilabel=False,
                  latent_dim=128):
         super(Custom_VGG, self).__init__()
         vgg_loader = VGG_TYPES[vgg_type]
@@ -308,9 +363,11 @@ class Custom_VGG(nn.Module):
                                             nn.Linear(512, 512),
                                             nn.ReLU(True),
                                             nn.Dropout(),
-                                            nn.Linear(512, self.no_classes),
-                                            nn.LogSoftmax(dim=1)
-                                        )
+                                            nn.Linear(512, self.no_classes))
+            if if_multilabel:
+                self.classifier.append(nn.Sigmoid())
+            else:
+                self.classifier.append(nn.LogSoftmax(dim=1))
         else:
             self.classifier = nn.Sequential(nn.Linear(self.n_features, self.latent_dim))
         self._init_classifier_weights()
@@ -571,8 +628,12 @@ class Autoencoder(nn.Module):
                  base_channel_size: int = 16,
                  latent_dim: int = 64,
                  num_input_channels: int = 3,
+                 if_classifer=False,
+                 no_classes=None,
                  device = None):
         super().__init__()
+        self.if_classifer = if_classifer
+        self.no_classes = no_classes
         # Creating encoder and decoder
         #self.encoder = Encoder(num_input_channels, base_channel_size, latent_dim).to(device)
         self.encoder = Custom_VGG(pretrained=True, 
@@ -581,17 +642,35 @@ class Autoencoder(nn.Module):
                                   if_classifer=False,
                                   latent_dim=latent_dim).to(device)
         self.decoder = Decoder(num_input_channels, base_channel_size, latent_dim).to(device)
-    
+        if self.if_classifer:
+            self.classifier = nn.Sequential(nn.Linear(latent_dim, 512),
+                                            nn.ReLU(True),
+                                            nn.Dropout(),
+                                            nn.Linear(512, 512),
+                                            nn.ReLU(True),
+                                            nn.Dropout(),
+                                            nn.Linear(512, self.no_classes))
+            self.classifier.append(nn.Sigmoid())
+            self._init_classifier_weights()
+            self.classifier = self.classifier.to(device)
+
     def parameters(self):
-       return list(self.encoder.parameters()) + list(self.decoder.parameters())
+        if self.if_classifer:
+            return list(self.encoder.parameters()) + list(self.decoder.parameters()) + list(self.classifier.parameters()) 
+        else:        
+            return list(self.encoder.parameters()) + list(self.decoder.parameters())
 
     def train(self):
         self.encoder.train()
         self.decoder.train()
+        if self.if_classifer:
+            self.classifier.train()
 
     def eval(self):
         self.encoder.eval()
         self.decoder.eval()
+        if self.if_classifer:
+            self.classifier.eval()
         
     def forward(self, x):
         """
@@ -599,13 +678,34 @@ class Autoencoder(nn.Module):
         """
         z = self.encoder(x)
         x_hat = self.decoder(z)
-        return x_hat
+        if self.if_classifer:
+            return x_hat, self.classifier(z)
+        else:
+            return x_hat
     
-    def _get_reconstruction_loss(self, x):
+    def _get_reconstruction_loss(self, x, loss_F):
         """
         Given a batch of images, this function returns the reconstruction loss (MSE in our case)
         """
-        x_hat = self.forward(x)
-        loss = F.mse_loss(x, x_hat, reduction="none")
+        if self.if_classifer:
+            x_hat, _ = self.forward(x)
+        else:
+            x_hat = self.forward(x)
+        loss = loss_F(x, x_hat)
         loss = loss.sum(dim=[1,2,3]).mean(dim=[0])
         return loss
+        
+    def _get_reconstruction_and_classification_loss(self, x, target, loss_F, loss_c_F):
+        """
+        Given a batch of images, this function returns the reconstruction loss (MSE in our case)
+        """
+        x_hat, c = self.forward(x)
+        loss = loss_F(x, x_hat)
+        loss = loss.sum(dim=[1,2,3]).mean(dim=[0])
+        return loss, loss_c_F(c, target)
+
+    def _init_classifier_weights(self):
+        for m in self.classifier:
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
