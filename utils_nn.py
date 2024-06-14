@@ -640,8 +640,12 @@ class Autoencoder(nn.Module):
                                   ipt_size=[250,250], 
                                   vgg_type='vgg11', 
                                   if_classifer=False,
-                                  latent_dim=latent_dim).to(device)
-        self.decoder = Decoder(num_input_channels, base_channel_size, latent_dim).to(device)
+                                  latent_dim=latent_dim)
+        if device is not None: 
+            self.encoder.to(device)
+        self.decoder = Decoder(num_input_channels, base_channel_size, latent_dim)
+        if device is not None: 
+            self.decoder.to(device)
         if self.if_classifer:
             self.classifier = nn.Sequential(nn.Linear(latent_dim, 512),
                                             nn.ReLU(True),
@@ -652,7 +656,8 @@ class Autoencoder(nn.Module):
                                             nn.Linear(512, self.no_classes))
             self.classifier.append(nn.Sigmoid())
             self._init_classifier_weights()
-            self.classifier = self.classifier.to(device)
+            if device is not None: 
+                self.classifier.to(device)
 
     def parameters(self):
         if self.if_classifer:

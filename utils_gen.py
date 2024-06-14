@@ -4,7 +4,7 @@ import numpy as np
 import json
 
 from pyxtal import pyxtal
-from scipy.fft import fft2, fftshift
+from scipy.fft import fft, fft2, fftshift
 
 import matplotlib.pyplot as plt
 from ase.visualize.plot import plot_atoms
@@ -101,6 +101,24 @@ wallpaper_symmetries = {"p1":  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0]
                         "p31m":[1,0,1,1,0,0,0,0,0,0,1,0,1,1,  0,0,0,0,0,0,0,0,0],
                         "p6":  [1,1,1,1,0,0,1,1,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
                         "p6m": [1,1,1,1,0,0,1,1,1,1,1,1,1,1,  0,0,0,0,0,0,0,0,0]}
+
+wallpaper_reduced = {1: 1,
+                    2:  1,
+                    3:  2,
+                    4:  2, 
+                    5:  4,
+                    6:  3,
+                    7:  3,
+                    8:  3,
+                    9:  4,
+                    10: 5,
+                    11: 5,
+                    12: 5,
+                    13: 6,
+                    14: 6,
+                    15: 6,
+                    16: 7,
+                    17: 7}
                             
 def random_wallpaper():
     return np.random.randint(17)+1
@@ -166,7 +184,33 @@ class RandomLattice:
         ax.imshow(transform[400:600,400:600], cmap='gray_r')
         ax.set_axis_off()
         fig.savefig(os.path.join(self.path, sample_name+'_f'), dpi=100)
+        
+    def fourier_trasform_(self, real_image):
+        fft = fftshift(fft2(real_image))
+        return np.real(fft), np.imag(fft)     
     
     def dump_labels(self, labels):
         with open(os.path.join(self.path, 'labels.json'), 'w') as fp:
             json.dump(labels, fp)
+
+
+class RandomLattice1D:
+    
+    def __init__(self, supercell_size=1000, sigma=1., path=None):
+        assert os.path.isdir(path), "Path to save the generated images does not exist."
+        self.path = path
+        self.supercell_size = supercell_size
+        self.grid = np.linspace(0., self.supercell_size, num=self.supercell_size+1, endpoint=True)
+        self.sigma = sigma
+
+    def generate_lattice_quasi(self, sublattices=[10,12], offsets=[0,0]):
+        density = np.zeros((self.supercell_size+1, len(sublattices)))
+        for s, (Rs, offset) in enumerate(zip(sublattices, offsets)):
+            no_nodes = int(self.supercell_size/Rs)
+            for i in range(no_nodes+1):
+                density[:,s] += np.exp(-((self.grid-i*Rs-offset)/self.sigma)**2/2.)
+        return density
+    
+    def fourier_trasform_(self, real_image):
+        trans = fftshift(fft(real_image))
+        return np.real(trans), np.imag(trans) 

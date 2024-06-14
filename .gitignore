@@ -1,5 +1,8 @@
 __pycache__
 generated/
+generated1d/
+Fresults/
+Qresults/
 old_models/
 *.png
 *.pth
