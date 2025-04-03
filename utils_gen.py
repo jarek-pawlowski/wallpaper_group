@@ -9,6 +9,21 @@ from scipy.fft import fft, fft2, fftshift
 import matplotlib.pyplot as plt
 from ase.visualize.plot import plot_atoms
 
+def abs2(c):
+    """Calculates absolule value (modulus) of a given complex number.
+
+    Parameters
+    ----------
+    c : complex
+        Input complex number.
+
+    Returns
+    -------
+    float
+        Absolute value of c: |c|^2.
+    """
+    return c.real**2 + c.imag**2
+
 # "name" = wallpaper group name, 
 # "layer_no" = 3D extension (layer group number), 
 # "no_atoms" = bounds for number of atoms in UC, 
@@ -152,7 +167,8 @@ class RandomLattice:
         xtal = pyxtal()
         xtal.from_random(2, self.group["layer_no"], ['C'], [no_atoms_in_UC], thickness=2.)
         ase_lattice = xtal.to_ase()*self.supercell
-        ase_lattice.rotate(np.random.randint(self.max_rotation_angle)+1, 'z')
+        if self.max_rotation_angle > 1:
+            ase_lattice.rotate(np.random.randint(self.max_rotation_angle)+1, 'z')
         return ase_lattice, self.group["name"]
 
     def render_lattice(self, ase_lattice, sample_name=None, title=False, return_ndarray=True):
@@ -164,15 +180,15 @@ class RandomLattice:
         if title is False: fig.tight_layout()
         if return_ndarray:
             io_buf = io.BytesIO()
-            fig.savefig(io_buf, format='raw', dpi=200)
+            fig.savefig(io_buf, format='raw', dpi=400)
             io_buf.seek(0)
             img_arr = np.reshape(np.frombuffer(io_buf.getvalue(), dtype=np.uint8),
-                                newshape=(int(fig.bbox.bounds[3])*2, int(fig.bbox.bounds[2])*2, -1))
+                                newshape=(int(fig.bbox.bounds[3])*4, int(fig.bbox.bounds[2])*4, -1))
             io_buf.close()
         if sample_name is not None:
             if title:
                 ax.set_title(self.group["name"])
-            fig.savefig(os.path.join(self.path, sample_name), dpi=200)
+            fig.savefig(os.path.join(self.path, sample_name), dpi=400)
         plt.close()
         if return_ndarray:
             return img_arr[:,:,0]
@@ -205,12 +221,106 @@ class RandomLattice1D:
 
     def generate_lattice_quasi(self, sublattices=[10,12], offsets=[0,0]):
         density = np.zeros((self.supercell_size+1, len(sublattices)))
+        positions = []
+        labels = []
         for s, (Rs, offset) in enumerate(zip(sublattices, offsets)):
             no_nodes = int(self.supercell_size/Rs)
             for i in range(no_nodes+1):
                 density[:,s] += np.exp(-((self.grid-i*Rs-offset)/self.sigma)**2/2.)
-        return density
+                positions.append(i*Rs+offset)
+                labels.append(s)
+        self.density  = density
+        sorted_inds = np.argsort(positions)
+        self.positions = np.array(positions)[sorted_inds]
+        self.labels = np.array(labels)[sorted_inds]
+        return self.density
+    
+    def calculate_distances(self, min_distance=None):
+        distances = np.array([self.positions[i]-self.positions[i-1] for i in range(1, len(self.positions))])
+        if min_distance is not None:
+            distances = distances[distances >= min_distance]  # close nodes treat as tightly coupled
+        self.distances = distances
+        
+    def find_sublattice_partner(self):
+        lp = [self.positions[1:-1][self.labels[1:-1]==s] for s in range(self.density.shape[-1])]
+        li = [np.where(self.labels[1:-1]==s)[0] for s in range(self.density.shape[-1])]
+        partner = np.zeros(len(self.positions)-2, dtype=int)
+        for s, (p,l) in enumerate(zip(self.positions[1:-1],self.labels[1:-1])):
+            if l == 0: partner[s] = li[1][np.argmin(np.abs(lp[1]-p))]
+            if l == 1: partner[s] = li[0][np.argmin(np.abs(lp[0]-p))]
+        self.sublattice_partner = partner
+        
+    def calculate_relative_displacements(self, displacement):
+        w = []
+        for s, u in enumerate(displacement):
+            w.append(u-displacement[self.sublattice_partner[s]])
+        return np.array(w)
+    
+    def spring_c(self, x):
+        return 1./(self.alpha_c+x)
+    
+    def spring_c_(self, qn):
+        alpha = 0.1
+        delta = 0.2
+        phi = np.pi/3.
+        return alpha + (1.+ delta*np.cos(qn + phi))
+    
+    def dynamical_matrix(self, alpha_c):
+        self.alpha_c = alpha_c
+        # fill in (3-diagonal) Dynamical matrix
+        D_matrix = np.zeros((len(self.distances)-1,len(self.distances)-1))
+        for i in range(0,len(self.distances)-2):
+            D_matrix[i,i] = self.spring_c(self.distances[i]) + self.spring_c(self.distances[i+1])
+            D_matrix[i,i+1] = -self.spring_c(self.distances[i+1])
+            D_matrix[i+1,i] = -self.spring_c(self.distances[i+1])  # symmetric
+        D_matrix[-1,-1] = self.spring_c(self.distances[-2]) + self.spring_c(self.distances[-1])
+        return D_matrix
+    
+    def dynamical_matrix_(self, Q):
+        # fill in (3-diagonal) Dynamical matrix
+        D_matrix = np.zeros((len(self.distances)-1,len(self.distances)-1))
+        for i in range(0,len(self.distances)-2):
+            D_matrix[i,i] = self.spring_c_(Q*i) + self.spring_c_(Q*(i+1))
+            D_matrix[i,i+1] = -self.spring_c_(Q*(i+1))
+            D_matrix[i+1,i] = -self.spring_c_(Q*(i+1))  # symmetric
+        D_matrix[-1,-1] = self.spring_c_(Q*(len(self.distances)-1)) + self.spring_c_(Q*len(self.distances))
+        return D_matrix
     
     def fourier_trasform_(self, real_image):
         trans = fftshift(fft(real_image))
         return np.real(trans), np.imag(trans) 
+
+    
+class RandomLattice2D:
+    def __init__(self, supercell_size=100, flake_size=10., sigma=1., path=None):
+        assert os.path.isdir(path), "Path to save the generated images does not exist."
+        self.path = path
+        self.supercell_size = supercell_size
+        self.flake_size = flake_size
+        x = np.linspace(-self.flake_size/2., self.flake_size/2., num=self.supercell_size+1, endpoint=True)
+        y = np.linspace(-self.flake_size/2., self.flake_size/2., num=self.supercell_size+1, endpoint=True)
+        self.gridX, self.gridY =np.meshgrid(x, y)
+        self.sigma = sigma  
+        self.graphene_lattice_vecs = np.array([[1.,0.], [.5, np.sqrt(3.)/2.]])
+        self.graphene_sublattices = np.array([[.5,np.sqrt(3.)/6.], [1.,np.sqrt(3.)/3.]])
+        self.com = (self.graphene_sublattices[0]+self.graphene_sublattices[1])/2.
+    def generate_lattice_graphene(self, sublattices=[10], offsets=[[0.,0.]], angles=[0.]): 
+        self.density = np.zeros((self.supercell_size+1, self.supercell_size+1, len(sublattices)))
+        self.positions = np.zeros((len(sublattices), sublattices[0]**2, 2))
+        self.rotations = [np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]]) for phi in angles]
+        for s, (Ns, offset) in enumerate(zip(sublattices, offsets)):
+            # generate lattice
+            for i in range(Ns):
+                for j in range(Ns):
+                    self.positions[s,i*Ns+j] = self.graphene_lattice_vecs[0]*i + self.graphene_lattice_vecs[1]*j
+            # center the structure
+            self.positions[s,:] -= [np.mean(self.positions[s,:,0]),np.mean(self.positions[s,:,1])]+self.com
+            # generate density:
+            for p0 in self.positions[s]:
+                pA = self.rotations[s] @ (p0 + self.graphene_sublattices[0] + offset)
+                pB = self.rotations[s] @ (p0 + self.graphene_sublattices[1] + offset)
+                # sublattice A
+                self.density[:,:,s] += np.exp(-((self.gridX-pA[0])/self.sigma)**2/2.)*np.exp(-((self.gridY-pA[1])/self.sigma)**2/2.)
+                # sublattice B
+                self.density[:,:,s] += np.exp(-((self.gridX-pB[0])/self.sigma)**2/2.)*np.exp(-((self.gridY-pB[1])/self.sigma)**2/2.)
+        return self.density
