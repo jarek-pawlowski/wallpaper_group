@@ -15,4 +15,5 @@ Quasicrystals.py + Qresults -> 1d incommensurate chain in Fourier space
 2Dmodes.py -> 12-fold quasicrystal
 
 Prepresentation.py -> Phase space representation for 2D wallpapers, then symmetry detector
+
 Quasicrystals.py -> Experiments with phase-function for 1D quasicrystals
