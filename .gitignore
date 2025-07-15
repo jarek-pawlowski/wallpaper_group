@@ -3,6 +3,7 @@ generated/
 generated1d/
 Fresults/
 Qresults/
+Presults/
 old_models/
 *.png
 *.pth

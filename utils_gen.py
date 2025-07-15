@@ -5,8 +5,10 @@ import json
 
 from pyxtal import pyxtal
 from scipy.fft import fft, fft2, fftshift
+from skimage import filters
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import SymLogNorm
 from ase.visualize.plot import plot_atoms
 
 def abs2(c):
@@ -49,6 +51,7 @@ wallpaper_groups = {1:  {"name" : "p1",   "layer_no" : 1,  "no_atoms" : [1, 10],
 sorted_groups = {"p1": 0, "p2": 1, "pg": 2, "pm": 3, "cm": 4, "pgg": 5, "pmg": 6, "pmm": 7, "cmm": 8,
                  "p4": 9, "p4g": 10, "p4m": 11, "p3": 12, "p3m1": 13, "p31m": 14, "p6": 15, "p6m": 16}
 
+'''
 plane_symmety_operations = {# point symmetry operations
                             0: np.array([[1,0,0],[0,1,0]]),       # {1|0}  
                             1: np.array([[-1,0,0],[0,-1,0]]),     # {2|0}
@@ -74,8 +77,9 @@ plane_symmety_operations = {# point symmetry operations
                             20: np.array([[1,0,0.5],[0,-1,0.5]]), # {m01|.5,.5}
                             21: np.array([[0,1,0.5],[1,0,0.5]]),  # {m1-1|.5,.5}
                             22: np.array([[0,-1,0.5],[-1,0,0.5]])}# {m11,.5,.5}
+'''
 
-plane_symmety_names =  {0: "{1|0}", 
+plane_symmetry_names = {0: "{1|0}", 
                         1: "{2|0}", 
                         2: "{3-|0}", 
                         3: "{3+|0}", 
@@ -97,7 +101,7 @@ plane_symmety_names =  {0: "{1|0}",
                         19: "{m01|.5,0}", 
                         20: "{m01|.5,.5}", 
                         21: "{m1-1|.5,.5}", 
-                        22: "{m11,.5,.5}"}
+                        22: "{m11|.5,.5}"}
 
 wallpaper_symmetries = {"p1":  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
                         "p2":  [1,1,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
@@ -116,6 +120,51 @@ wallpaper_symmetries = {"p1":  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0]
                         "p31m":[1,0,1,1,0,0,0,0,0,0,1,0,1,1,  0,0,0,0,0,0,0,0,0],
                         "p6":  [1,1,1,1,0,0,1,1,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
                         "p6m": [1,1,1,1,0,0,1,1,1,1,1,1,1,1,  0,0,0,0,0,0,0,0,0]}
+
+plane_proper_symmetry = {0: "{1|0}",
+                         1: "{2|0}", 
+                         2: "{3|0}", 
+                         3: "{4|0}",  
+                         4: "{6|0}", 
+                         5: "{m10|0}", 
+                         6: "{m01,0}", 
+                         7: "{m1-1|0}", 
+                         8: "{m11,0}", 
+                         9: "{m12|0}", 
+                        10: "{m21|0}",
+                        11: "{1|.5,.5}", 
+                        12: "{2|.5,.5}", 
+                        13: "{m10,.5,0}", 
+                        14: "{m10|0,.5}", 
+                        15: "{m10|.5,.5}", 
+                        16: "{m01|.5,0}", 
+                        17: "{m01|.5,.5}", 
+                        18: "{m1-1|.5,.5}", 
+                        19: "{m11|.5,.5}"}
+
+wallpaper_symmetries_ = {"p1":  [1,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p2":  [1,1,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "pg":  [1,0,0,0,0,0,0,0,0,0,0,  0,0,0,1,0,0,0,0,0], 
+                         "pm":  [1,0,0,0,0,1,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "cm":  [1,0,0,0,0,1,0,0,0,0,0,  1,0,0,0,1,0,0,0,0],
+                         "pgg": [1,1,0,0,0,0,0,0,0,0,0,  0,0,0,0,1,0,1,0,0],
+                         "pmg": [1,1,0,0,0,0,0,0,0,0,0,  0,0,1,0,0,1,0,0,0],
+                         "pmm": [1,1,0,0,0,1,1,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "cmm": [1,1,0,0,0,1,1,0,0,0,0,  1,1,0,0,1,0,1,0,0],
+                         "p4":  [1,1,0,1,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p4g": [1,1,0,1,0,0,0,0,0,0,0,  0,0,0,0,1,0,1,1,1],
+                         "p4m": [1,1,0,1,0,1,1,1,1,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p3":  [1,0,1,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p3m1":[1,0,1,0,0,1,1,0,1,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p31m":[1,0,1,0,0,0,0,1,0,1,1,  0,0,0,0,0,0,0,0,0],
+                         "p6":  [1,1,1,1,0,1,1,0,0,0,0,  0,0,0,0,0,0,0,0,0],
+                         "p6m": [1,1,1,1,0,1,1,1,1,1,1,  0,0,0,0,0,0,0,0,0]}
+
+symmetry_operations = {0: np.array([[1,0,0],[0,1,0]]),                              # {1|0}  
+                       1: np.array([[-1,0,0],[0,-1,0]]),                            # {2|0}
+                       2: np.array([[-1.,-np.sqrt(3.),0],[np.sqrt(3.),-1,0]])/2,    # {3|0} 
+                       3: np.array([[0,-1,0],[1,0,0]]),                             # {4|0}
+                       4: np.array([[ 1.,-np.sqrt(3.),0],[np.sqrt(3.), 1,0]])/2}    # {6|0}
 
 wallpaper_reduced = {1: 1,
                     2:  1,
@@ -165,7 +214,7 @@ class RandomLattice:
         no_atoms_in_UC = np.random.randint(rand_bounds[0], rand_bounds[1]+1)*rand_multiplier
         # define random crystal
         xtal = pyxtal()
-        xtal.from_random(2, self.group["layer_no"], ['C'], [no_atoms_in_UC], thickness=2.)
+        xtal.from_random(2, self.group["layer_no"], ['C'], [no_atoms_in_UC], thickness=2.)  # [no_atoms_in_UC]
         ase_lattice = xtal.to_ase()*self.supercell
         if self.max_rotation_angle > 1:
             ase_lattice.rotate(np.random.randint(self.max_rotation_angle)+1, 'z')
@@ -180,10 +229,11 @@ class RandomLattice:
         if title is False: fig.tight_layout()
         if return_ndarray:
             io_buf = io.BytesIO()
-            fig.savefig(io_buf, format='raw', dpi=400)
+            fig.savefig(io_buf, format='raw', dpi=800)
             io_buf.seek(0)
             img_arr = np.reshape(np.frombuffer(io_buf.getvalue(), dtype=np.uint8),
-                                newshape=(int(fig.bbox.bounds[3])*4, int(fig.bbox.bounds[2])*4, -1))
+                                newshape=(int(fig.bbox.bounds[3])*8, int(fig.bbox.bounds[2])*8, -1))
+            img_arr = img_arr[1000:3000,1000:3000]
             io_buf.close()
         if sample_name is not None:
             if title:
@@ -201,9 +251,14 @@ class RandomLattice:
         ax.set_axis_off()
         fig.savefig(os.path.join(self.path, sample_name+'_f'), dpi=100)
         
-    def fourier_trasform_(self, real_image):
-        fft = fftshift(fft2(real_image))
-        return np.real(fft), np.imag(fft)     
+    def fourier_trasform_(self, real_image, window=True):
+        if window:
+            #w = filters.window('blackman', real_image.shape)
+            w = filters.window(('gaussian', 100.), real_image.shape)
+        else:
+            w = 1.
+        fft = fftshift(fft2(real_image*w))      
+        return np.real(fft), np.imag(fft)
     
     def dump_labels(self, labels):
         with open(os.path.join(self.path, 'labels.json'), 'w') as fp:
@@ -324,3 +379,63 @@ class RandomLattice2D:
                 # sublattice B
                 self.density[:,:,s] += np.exp(-((self.gridX-pB[0])/self.sigma)**2/2.)*np.exp(-((self.gridY-pB[1])/self.sigma)**2/2.)
         return self.density
+    
+class Plotting:
+    
+    def __init__(self, path):
+        self.path = path
+        if not os.path.exists(path):
+            os.makedirs(path)
+     
+    def plot_lattice(self, crystal_render, filename='lattice.png'): 
+        crystal_render_plot = crystal_render.copy()
+        crystal_render_plot[1000,:] = 0
+        crystal_render_plot[:,1000] = 0
+        fig, ax = plt.subplots()
+        fig.set_size_inches(5., 5.)
+        fig.subplots_adjust(bottom=0, top=1, left=0, right=1)
+        ax.set_aspect(1.)
+        ax.imshow(crystal_render_plot[500:1500,500:1500], cmap='gray')
+        ax.tick_params(axis="both", length=0, labelbottom=False, labelleft=False)
+        #ax.set_axis_off()
+        fig.savefig(os.path.join(self.path, filename), dpi=200, bbox_inches='tight')
+        plt.close()
+     
+    def plot_fouriers(self, transform, filename='fourier.png', select=None):
+        amp = np.amax(np.abs(transform))/3.
+        fig, axs = plt.subplots(1,2)
+        fig.set_size_inches(11., 5.)
+        ((ax1,ax2)) = axs
+        ax1.set_aspect(1.)
+        if select is not None:
+            cb = ax1.imshow(transform.real[select[0]:select[1],select[0]:select[1]], cmap='bwr', vmin=-amp, vmax=amp)
+        else:
+            cb = ax1.imshow(transform.real, cmap='bwr', vmin=-amp, vmax=amp)
+        ax1.tick_params(axis="both", labelbottom=False, labelleft=False)
+        #ax1.set_axis_off()
+        ax1.set_title('real')
+        ax2.set_aspect(1.)
+        if select is not None:
+            cb = ax2.imshow(transform.imag[select[0]:select[1],select[0]:select[1]], cmap='bwr', vmin=-amp, vmax=amp)
+        else:
+            cb = ax2.imshow(transform.imag, cmap='bwr', vmin=-amp, vmax=amp)            
+        ax2.tick_params(axis="both", labelbottom=False, labelleft=False)
+        #ax2.set_axis_off()
+        ax2.set_title('imag')
+        fig.colorbar(cb, ax=axs.ravel().tolist())
+        fig.savefig(os.path.join(self.path, filename), dpi=300, bbox_inches='tight')
+        plt.close()
+
+    def plot_phaseF(self, phi, filename='phaseF.png', select=None):
+        fig, ax = plt.subplots()
+        fig.set_size_inches(6., 5.)
+        ax.set_aspect(1.)
+        if select is not None:
+            cb = ax.imshow(phi[select[0]:select[1],select[0]:select[1]], cmap='PiYG')
+        else:
+            cb = ax.imshow(phi, cmap='PiYG')          
+        ax.set_axis_off()
+        ax.set_title('phase')
+        fig.colorbar(cb)
+        fig.savefig(os.path.join(self.path, filename), dpi=300, bbox_inches='tight')
+        plt.close()
